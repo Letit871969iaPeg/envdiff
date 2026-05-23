@@ -1,13 +1,14 @@
 """Command-line interface for envdiff."""
 
-from __future__ import annotations
-
-import argparse
 import sys
+import argparse
 
-from envdiff.comparator import compare_env_files, has_differences
-from envdiff.exporter import ExportFormat, export_result
+from envdiff.parser import parse_env_file
+from envdiff.comparator import compare_env_files
 from envdiff.reporter import print_report
+from envdiff.exporter import export_result
+from envdiff.validator import validate_env_file
+from envdiff.validation_reporter import print_multi_validation_report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -15,53 +16,62 @@ def build_parser() -> argparse.ArgumentParser:
         prog="envdiff",
         description="Compare .env files across environments.",
     )
-    parser.add_argument("first", help="Path to the first .env file")
-    parser.add_argument("second", help="Path to the second .env file")
-    parser.add_argument(
-        "--no-color",
-        action="store_true",
-        default=False,
-        help="Disable colored output",
-    )
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command")
+
+    # --- compare sub-command (default behaviour) ---
+    compare_p = subparsers.add_parser("compare", help="Compare two or more .env files")
+    compare_p.add_argument("files", nargs="+", metavar="FILE", help=".env files to compare")
+    compare_p.add_argument("--base", default=None, help="Treat this file as the reference baseline")
+    compare_p.add_argument(
         "--export",
         choices=["json", "csv", "markdown"],
-        metavar="FORMAT",
-        help="Export diff result to FORMAT (json, csv, markdown) and print to stdout",
+        default=None,
+        help="Export format",
     )
-    parser.add_argument(
-        "--output",
-        metavar="FILE",
-        help="Write exported output to FILE instead of stdout (requires --export)",
-    )
+    compare_p.add_argument("--output", "-o", default=None, help="Output file path (default: stdout)")
+    compare_p.add_argument("--no-color", action="store_true", help="Disable colored output")
+
+    # --- validate sub-command ---
+    validate_p = subparsers.add_parser("validate", help="Validate one or more .env files")
+    validate_p.add_argument("files", nargs="+", metavar="FILE", help=".env files to validate")
+    validate_p.add_argument("--no-color", action="store_true", help="Disable colored output")
+
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: D401
+def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    if args.output and not args.export:
-        parser.error("--output requires --export")
+    if args.command == "validate":
+        results = [validate_env_file(f) for f in args.files]
+        print_multi_validation_report(results, use_color=not args.no_color)
+        return 1 if any(r.has_errors for r in results) else 0
 
-    try:
-        result = compare_env_files(args.first, args.second)
-    except FileNotFoundError as exc:
-        print(f"envdiff error: {exc}", file=sys.stderr)
-        return 2
+    # Default: compare
+    if args.command is None or args.command == "compare":
+        if not hasattr(args, "files") or not args.files:
+            parser.print_help()
+            return 1
 
-    if args.export:
-        text = export_result(result, args.export)  # type: ignore[arg-type]
-        if args.output:
-            with open(args.output, "w", encoding="utf-8") as fh:
-                fh.write(text)
-        else:
-            print(text)
-    else:
-        print_report(result, use_color=not args.no_color)
+        base_file = args.base or args.files[0]
+        other_files = [f for f in args.files if f != base_file]
 
-    return 1 if has_differences(result) else 0
+        if not other_files:
+            print("envdiff: need at least two files to compare.", file=sys.stderr)
+            return 1
+
+        base_env = parse_env_file(base_file)
+        for other in other_files:
+            other_env = parse_env_file(other)
+            result = compare_env_files(base_env, other_env, base_path=base_file, other_path=other)
+            if args.export:
+                export_result(result, fmt=args.export, output_path=args.output)
+            else:
+                print_report(result, use_color=not args.no_color)
+
+    return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())
