@@ -9,11 +9,21 @@ def _color(text: str, code: str) -> str:
     return f"\033[{code}m{text}\033[0m"
 
 
+def _divider(width: int = 40) -> str:
+    """Return a colored horizontal divider line."""
+    return _color("-" * width, "36")
+
+
 def print_redact_report(result: RedactResult, filename: str = "") -> None:
-    """Print a summary of which keys were redacted."""
+    """Print a summary of which keys were redacted.
+
+    Args:
+        result: The result object returned by the redactor.
+        filename: Optional filename to include in the report header.
+    """
     label = f" ({filename})" if filename else ""
     print(_color(f"Redaction Report{label}", "1;36"))
-    print(_color("-" * 40, "36"))
+    print(_divider())
 
     if result.redact_count == 0:
         print(_color("  No sensitive keys detected.", "32"))
@@ -25,7 +35,7 @@ def print_redact_report(result: RedactResult, filename: str = "") -> None:
             )
         )
         for key in result.redacted_keys:
-            print(f"    {_color(key, '31')} → {_color('***REDACTED***', '90')}")
+            print(f"    {_color(key, '31')} \u2192 {_color('***REDACTED***', '90')}")
 
     total = len(result.original)
     safe = total - result.redact_count
